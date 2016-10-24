@@ -1,6 +1,5 @@
 ﻿using System;
 using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Forms;
@@ -8,7 +7,7 @@ using System.Windows.Forms;
 namespace ProjectSafe
 {
     internal class Crypto
-    {                                                                                              
+    {
         private const string BackupSuffix = ".backup";
 
         private readonly RijndaelManaged _aes;
@@ -25,14 +24,14 @@ namespace ProjectSafe
                 Mode = CipherMode.CBC
             };
 
-            using (var pbkdf2 = new Rfc2898DeriveBytes(hash.BinToHex(), salt, 50000))
+            using (var pbkdf2 = new Rfc2898DeriveBytes(hash.BytesToHex(), salt, 50000))
             {
                 _aes.Key = pbkdf2.GetBytes(_aes.KeySize / 8);
                 _aes.IV = pbkdf2.GetBytes(_aes.BlockSize / 8);
             }
         }
 
-        ~Crypto()
+        public void Close()
         {
             _aes.Dispose();
         }
@@ -60,10 +59,10 @@ namespace ProjectSafe
                             var buf = new byte[mem.Length];
                             mem.Seek(0, SeekOrigin.Begin);
                             mem.Read(buf, 0, buf.Length);
-                            var sec = buf.BinToHex();
+                            var sec = buf.BytesToHex();
                             if (backup)
                             {
-                                File.Copy(file, file + BackupSuffix);    
+                                File.Copy(file, file + BackupSuffix);
                             }
 
                             using (var writer = new StreamWriter(new FileStream(file, FileMode.Truncate)))
@@ -93,7 +92,7 @@ namespace ProjectSafe
                     fs.Read(input, 0, input.Length);
                 }
 
-                var sec = Encoding.ASCII.GetString(input).HexToBin();
+                var sec = Encoding.ASCII.GetString(input).HexToBytes();
                 using (var mem = new MemoryStream(sec))
                 {
                     using (var dec = _aes.CreateDecryptor())
@@ -105,8 +104,8 @@ namespace ProjectSafe
                             if (backup)
                             {
                                 File.Copy(file, file + BackupSuffix);
-                            }            
-                                                     
+                            }
+
                             using (var f = new FileStream(file, FileMode.Truncate))
                             {
                                 f.Write(buf, 0, len);
@@ -125,24 +124,37 @@ namespace ProjectSafe
 
 internal static class HexExtersion
 {
-    public static string BinToHex(this byte[] hash)
+    public static string BytesToHex(this byte[] bytes)
     {
-        if (hash == null || hash.Length == 0)
+        if (bytes == null || bytes.Length == 0)
             return null;
-        var sb = new StringBuilder();
-        hash.ToList().ForEach(x => sb.Append($"{x:X2}"));
-        return sb.ToString();
+        //return BitConverter.ToString(bytes).Replace("-",string.Empty);   
+        var c = new char[bytes.Length * 2];
+        for (int bx = 0, cx = 0; bx < bytes.Length; ++bx, ++cx)
+        {
+            var b = (byte)(bytes[bx] >> 4);
+            c[cx] = (char)(b > 9 ? b + 0x37 + 0x20 : b + 0x30);
+
+            b = (byte)(bytes[bx] & 0x0F);
+            c[++cx] = (char)(b > 9 ? b + 0x37 + 0x20 : b + 0x30);
+        }
+
+        return new string(c);
     }
 
-    public static byte[] HexToBin(this string hex)
+    public static byte[] HexToBytes(this string str)
     {
-        if (string.IsNullOrEmpty(hex))
+        if (string.IsNullOrEmpty(str))
             return null;
-        var bb = new byte[hex.Length / 2];
-        for (var i = 0; i < hex.Length / 2; ++i)
+        var buffer = new byte[str.Length / 2];
+        for (int bx = 0, sx = 0; bx < str.Length / 2; ++bx, ++sx)
         {
-            bb[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            var c = str[sx];
+            buffer[bx] = (byte)((c > '9' ? (c > 'Z' ? c - 'a' + 10 : c - 'A' + 10) : c - '0') << 4);
+
+            c = str[++sx];
+            buffer[bx] |= (byte)(c > '9' ? (c > 'Z' ? c - 'a' + 10 : c - 'A' + 10) : c - '0');
         }
-        return bb;
+        return buffer;
     }
 }

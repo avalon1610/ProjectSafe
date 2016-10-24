@@ -1,5 +1,6 @@
-﻿using System;                       
+﻿using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,6 +23,15 @@ namespace ProjectSafe
         private const string Decrypted = "解密完成";
         private const string Title = "秘盒 ";
         private const string Warning = "正在工作, 强制退出可能导致数据损坏且永不可恢复, 确认退出?";
+
+        private static long _total;
+        private static long _current;
+
+        private readonly ToolTip _tooltip = new ToolTip();
+
+        private bool _busying;
+
+        private Stopwatch _cost;
         private bool _inited;
 
         public Main()
@@ -67,8 +77,6 @@ namespace ProjectSafe
             return true;
         }
 
-        private static long _total;
-        private static long _current;
         private void SearchDeeper(string path, Action<string> action, bool top = true)
         {
             try
@@ -79,17 +87,14 @@ namespace ProjectSafe
                     _total = Directory.GetFiles(path, "*", SearchOption.AllDirectories).Sum(t => new FileInfo(t).Length);
                 }
 
-                foreach (var d in Directory.EnumerateDirectories(path))
-                {
-                    SearchDeeper(d, action, false);
-                }
+                Parallel.ForEach(Directory.EnumerateDirectories(path), d => SearchDeeper(d, action, false));
 
-                foreach (var p in Directory.EnumerateFiles(path))
+                Parallel.ForEach(Directory.EnumerateFiles(path), p =>
                 {
                     _current += new FileInfo(p).Length;
-                    SetProperty(() => { progressBar.Value = (int) (_current*100/_total); });
+                    SetProperty(() => { progressBar.Value = (int)(_current * 100 / _total); });
                     action(p);
-                }
+                });
 
                 if (!top)
                     return;
@@ -99,7 +104,7 @@ namespace ProjectSafe
             catch (Exception e)
             {
                 MessageBox.Show(e.Message);
-            }            
+            }
         }
 
         private void SetProperty(Action action)
@@ -113,8 +118,7 @@ namespace ProjectSafe
                 action();
             }
         }
-               
-        private bool _busying;
+
         protected override void OnClosing(CancelEventArgs e)
         {
             if (!_busying)
@@ -137,12 +141,13 @@ namespace ProjectSafe
         {
             ReportStatus(msg, false);
             Busying(true);
-            SetProperty(() => { });
+            _cost = Stopwatch.StartNew();
         }
 
         private void EndWork(string msg)
         {
-            ReportStatus(msg);
+            _cost.Stop();
+            ReportStatus($"{msg} {(double)_cost.ElapsedMilliseconds / 1000}s");
             Busying(false);
         }
 
@@ -151,10 +156,10 @@ namespace ProjectSafe
             if (!Check())
                 return;
             BeginWork(Encrypting);
-            await Task.Run(() => SearchDeeper(labelProjectPath.Text, p =>
-            {
-                new Crypto(textBoxPassword.Text).Encrypt(p, checkBoxBackup.Checked);
-            }));
+            var crypto = new Crypto(textBoxPassword.Text);
+            await
+                Task.Run(() => SearchDeeper(labelProjectPath.Text, p => { crypto.Encrypt(p, checkBoxBackup.Checked); }));
+            crypto.Close();
             EndWork(Encrypted);
         }
 
@@ -163,12 +168,12 @@ namespace ProjectSafe
             if (!Check())
                 return;
             BeginWork(Decrypting);
-            await Task.Run(() => SearchDeeper(labelProjectPath.Text, p =>
-            {
-                new Crypto(textBoxPassword.Text).Decrypt(p, checkBoxBackup.Checked);
-            }));
+            var crypto = new Crypto(textBoxPassword.Text);
+            await
+                Task.Run(() => SearchDeeper(labelProjectPath.Text, p => { crypto.Decrypt(p, checkBoxBackup.Checked); }));
+            crypto.Close();
             EndWork(Decrypted);
-        }  
+        }
 
         private void Main_DragOver(object sender, DragEventArgs e)
         {
@@ -210,9 +215,5 @@ namespace ProjectSafe
                 labelProjectPath.Text = MultiInvalid;
             }
         }
-
-        private readonly ToolTip _tooltip = new ToolTip();
     }
-
-
 }
